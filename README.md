@@ -59,6 +59,29 @@ git checkout micro_hazelcast
 ### Project structure
 
 ```
+.
+├── README.md
+├── config-server
+│   └── config-server.py
+├── config.toml
+├── facade-service
+│   └── facade-service.py
+├── hazelcast-client.xml
+├── logging-service
+│   └── logging-service.py
+├── media
+│   └── ...
+├── messages-service
+│   └── messages-service.py
+└── scripts
+    ├── kill.sh
+    ├── launch.sh
+    ├── logs
+    │   ├── send_get_req_log.txt
+    │   └── send_post_req_log.txt
+    ├── send_get_req.sh
+    ├── send_post_req.sh
+    └── test_shut_down.sh
 ```
 
 ### Usage
