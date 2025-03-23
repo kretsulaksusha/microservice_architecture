@@ -2,182 +2,355 @@
 
 Github: [Microservice architecture](https://github.com/kretsulaksusha/microservice_architecture.git)
 
-## Task 1. Basic microservices architecture
+## Task 3. Microservices using Hazelcast Distributed Map
 
-Github: [Microservice architecture. Task 1](https://github.com/kretsulaksusha/microservice_architecture/tree/micro_basics)
+Github: [Microservice architecture. Task 3](https://github.com/kretsulaksusha/microservice_architecture/tree/micro_hazelcast)
 
-The task requires the implementation of 3 microservices, the interaction between which is based on the HTTP protocol, preferably based on the REST API paradigm (gRPC protocol can also be used).
+The task is based on the first task and is its development.
 
-The architecture consists of 3 microservices:
-- `facade-service` - accepts POST/GET requests from the client
-- `logging-service` - stores in memory all the messages it receives and can return them
-- `messages-service` - while acting as a stub, when accessed, it returns a static message
+The following should be added to the `logging-service`:
+- as a message store use Hazelcast Distributed Map
+- the ability to run multiple copies of the `logging-service` at the same time
+- `facade-service` randomly selects which copy of the `logging-service` to access to write and read messages
 
 ### Basic system functionality
 
 The client interacts with the `facade-service` via HTTP POST and GET requests. The client can be curl, Postman, a browser in Dev mode, etc.
 
-- Description of HTTP POST request flow
-    - The client sends a POST request to the `facade-service` with a specific text message - `msg`
-    - After receiving the message, the `facade-service` generates a unique `UUID` for it 
-    - The pair `{UUID, msg}` is sent to the `logging-service` as a POST message using the REST/HTTP-client program in the form of a POST message
-    - The `logging-service`, having received the message, saves it and the identifier to the local hash table (the identifier is used as a key) and displays the received message in its console
+- A new Hazelcast instance is started when the `logging-service` is launched (or the Hazelcast client connects to its Hazelcast cluster node)
+- The `logging-service` uses the Hazelcast Distributed Map to store messages instead of the local hash table
+- the `facade-service` with which the client interacts randomly selects a `logging-service` instance when sending POST/GET (GRPC) requests
+- if the selected `logging-service` instance is not available, the next one is selected, etc.
 
-    ![HTTP Post](media/http_post.png)
+![Basic Functionality](media/task/basic_functionality.png)
 
-- Description of HTTP GET request flow
+### Task
 
-    - The client sends a GET request to the `facade-service`
-    - After receiving the request, the `facade-service` generates GET requests to the `logging-service` and `messages-service` using the REST/HTTP-client program
-    - `logging-service`, upon receiving the request, returns all messages (without keys) stored in the hash table as a string
-    - `messages-service`, upon receiving a request, returns static text, for example, 'not implemented yet'
-    - `facade-service`, after receiving responses from `logging-service` and `messages-service`, concatenates the text of both responses and returns to the client
-
-    ![HTTP Get](media/http_get.png)
+- Start 3 instances of the `logging-service` (locally they can run on different ports), respectively, 3 instances of Hazelcast should also be started.
+- Using HTTP POST, write 10 messages msg1-msg10 through the `facade-service`.
+- Show which messages each of the `logging-service` instances received (this should be visible in the service logs).
+- Read the messages via HTTP GET from `facade-service`.
+- Shut down 1 or 2 instances of the `logging-service` (Hazelcast nodes should be shut down as well) and check if we can read the messages.
 
 ### Additional system functionality
 
-- Availability of a `retry` mechanism:
-    - In the event of a connection failure, delay, or lack of response from the logging service, a `retry` mechanism should be used to try to repeat the same message transmission operation
-    - Simultaneously with the `retry` mechanism, the logging service should use deduplication for messages (exactly once delivery) to check that the same message is not repeated several times
-    - The protocol should show that the `retry` mechanism has been tested
+Due to the fact that there may now be several running instances of the `logging-service`, the `facade-service` must know their IP addresses to access them. The list of IP addresses can be contained in the code of the `facade-service` itself or passed to it at startup, but this approach is not flexible in case of dynamic assignment or change of these addresses.
+
+Therefore, it is proposed to include information about the IP addresses of other microservices in a separate registry, which will be managed by the `config-server` (later it will be replaced by Service registry and discovery).
+
+Now, before accessing the `logging-service` and `messages-service`, the `facade-service` must make a request to the `config-server`, where it will be returned a list of all IP addresses of instances of this service by the service name.
+
+![Additional Functionality](media/task/additional.png)
+
+The list of IP addresses of microservices on the `config-server` can be taken from the configuration file or passed from the command line when it is launched.
 
 ## Prerequisites
 
-- Python
+- Python (Hazelcast)
 
 ### Installation
 
 ```
 git clone https://github.com/kretsulaksusha/microservice_architecture.git
 cd microservice_architecture
+git checkout micro_hazelcast
 ```
 
 ### Project structure
 
 ```
-├── README.md
-├── facade-service
-│   └── facade-service.py
-├── logging-service
-│   └── logging-service.py
-├── media
-│   ├── http_get.png
-│   └── http_post.png
-└── messages-service
-    └── messages-service.py
 ```
 
 ### Usage
 
-1. Open 3 terminal windows in root directory.
-2. In the first terminal, navigate to `facade-service` and run:
+#### Configuration File: `config.toml`
 
-   ```bash
-   cd facade-service
-   python3 facade-service.py
-   ```
-3. In the second terminal, navigate to `logging-service` and run:
+The `config.toml` file holds all the essential service IPs and Hazelcast cluster details for the microservices architecture. It’s organized into sections for clarity and easy maintenance.
 
-   ```bash
-   cd logging-service
-   python3 logging-service.py
-   ```
-4. In the third terminal, navigate to `messages-service` and run:
+1. Services Configuration (`[service_ips]`)
 
-   ```bash
-   cd messages-service
-   python3 messages-service.py
-   ```
-5. Open a fourth terminal window to test the services using `curl`:
+This section defines IPs and ports for the core microservices:
 
-    - POST
+```toml
+[service_ips]
+messages-service = ["127.0.0.1:5001"]
+logging-service = ["127.0.0.1:5002", "127.0.0.1:5003", "127.0.0.1:5004"]
+```
 
-        ```bash
-        curl -X POST http://localhost:5000/facade -H "Content-Type: application/json" -d '{"msg": "msg1"}'
-        ```
+2. Hazelcast Configuration (`[hazelcast]`)
 
-        Output:
+This section sets up the Hazelcast cluster:
 
-        ```
-        {
-            "status": "success",
-            "uuid": "493027ba-43f0-4d90-b5c2-0b53d1e42bd8"
-        }
-        ```
+```toml
+[hazelcast]
+hazelcast-cluster-name = "microservice"
+hazelcast-clients = ["127.0.0.1:5701", "127.0.0.1:5702", "127.0.0.1:5703"]
+```
 
-    - GET
+Feel free to modify IPs and cluster settings.
 
-        ```bash
-        curl -X GET http://localhost:5000/facade
-        ```
+#### System
 
-        Output:
+1. To launch the system we need to start:
+    - a `facade-service`;
+    - a `messages-service`;
+    - 3 instances of the `logging-service`;
+    - 3 instances of Hazelcast nodes.
 
-        ```
-        {
-            "logs": [
-                "msg1"
-            ],
-            "message": "not implemented yet"
-        }
-        ```
-6. Test the retry mechanism:
+    This can be done by running the script `scripts/launch.sh`:
 
-    - Temporarily stop the `logging-service`.
-    - Send a POST request to the `facade-service` as shown in step 5.
-    - Observe the `facade-service` console for retry attempts:
-
+    ```shell
+    chmod +x scripts/launch.sh
+    ./scripts/launch.sh
     ```
-    Retrying... Error: ...
-    Retrying... Error: ...
-    Retrying... Error: ...
+
+    Additionally, we can run Hazelcast Managment Center:
+
+    ```shell
+    hz-mc start
+    ```
+
+2. Using HTTP POST we can write 10 messages msg1-msg10 through the `facade-service`.
+
+    In the terminal we will observe limited information that the messages are sent. For verbose version all output is written to the file stored in `scripts/logs` directory. Also, `facade-service` will log which messages each of the `logging-service` instances received.
+
+    ```shell
+    chmod +x scripts/send_post_req.sh
+    ./scripts/send_post_req.sh
+    ```
+
+3. Read the messages via HTTP GET from `facade-service`.
+
+    ```shell
+    chmod +x scripts/send_get_req.sh
+    ./scripts/send_get_req.sh
+    ```
+
+4. Testing the system.
+
+    Shut down 1 or 2 instances of the `logging-service` as well as Hazelcast nodes and check if we can read the messages.
+
+    ```shell
+    chmod +x scripts/test_shut_down.sh
+    ./scripts/test_shut_down.sh 1
+    ```
+
+    Then run HTTP GET and POST requests:
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    ```shell
+    ./scripts/send_post_req.sh
+    ```
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    Relaunch the system and run the same command but know shut down 2 services:
+
+    ```shell
+    chmod +x scripts/test_shut_down.sh
+    ./scripts/test_shut_down.sh 2
+    ```
+
+    Then run POST and GET requests.
+
+5. Stop the system.
+
+    ```shell
+    chmod +x scripts/kill.sh
+    ./scripts/kill.sh
     ```
 
 ### Results
 
 The application was tested as described in the Usage section. Below are the results:
 
-1. POST requests
+1. Launching the system:
 
-    ```bash
-    curl -X POST http://localhost:5000/facade -H "Content-Type: application/json" -d '{"msg": "msg1"}'
+    ```shell
+    chmod +x scripts/launch.sh
+    ./scripts/launch.sh
     ```
 
-    ![Test POST](media/test_http_post_1.png)
+    Additionally, we can run Hazelcast Managment Center:
 
-    ```bash
-    curl -X POST http://localhost:5000/facade -H "Content-Type: application/json" -d '{"msg": "msg2"}'
-    curl -X POST http://localhost:5000/facade -H "Content-Type: application/json" -d '{"msg": "msg3"}'
+    ```shell
+    hz-mc start
     ```
 
-    ![Test POST](media/test_http_post_2.png)
+    <img src="media/hz_mc.png" alt="" width="200"/>
 
-2. GET requests
+2. Using HTTP POST we can write 10 messages msg1-msg10 through the `facade-service`. In the terminal we will observe limited information that the message is sent.
 
-    ```bash
-    curl -X GET http://localhost:5000/facade
+    ```shell
+    chmod +x scripts/send_post_req.sh
+    ./scripts/send_post_req.sh
     ```
 
-    ![Test GET](media/test_http_get.png)
+    <img src="media/send_post_req/send_post_req.png" alt="" width="400"/>
 
-3. Retry mechanism
+    <img src="media/send_post_req/hz_mc_1.png" alt="" width="400"/>
 
-    Ar first, we need to stop one of the services, for example, `logging-service`. Then run:
+    <img src="media/send_post_req/hz_mc_2.png" alt="" width="500"/>
 
-    ```bash
-    curl -X POST http://localhost:5000/facade -H "Content-Type: application/json" -d '{"msg": "msg4"}'
+    <img src="media/send_post_req/hz_mc_3.png" alt="" width="500"/>
+
+    For verbose version all output is written to the file stored in `scripts/logs` directory.
+
+    Content of `scripts/logs/`:
+
+    ```
+    Logging time: 24-03-2025 00:17:11
+    {
+    "status": "success",
+    "uuid": "c04efb3c-3ddd-4a65-a7eb-4a78634debf4"
+    }
+    {
+    "status": "success",
+    "uuid": "5ac75e3d-65a5-4de8-b2c6-314e010dd29c"
+    }
+    {
+    "status": "success",
+    "uuid": "a7bb5027-39cc-4600-9120-db14a57f908f"
+    }
+    {
+    "status": "success",
+    "uuid": "44b9d397-c5c7-4066-a098-1362f4057b79"
+    }
+    {
+    "status": "success",
+    "uuid": "2cce74e5-5698-4597-9149-78cc328580ef"
+    }
+    {
+    "status": "success",
+    "uuid": "829e3694-1dc0-4a4a-b4d1-c8a2ed1f5d69"
+    }
+    {
+    "status": "success",
+    "uuid": "6e27eabe-de9c-43e9-811b-fa1e18eb6f9a"
+    }
+    {
+    "status": "success",
+    "uuid": "e6035a94-2f88-4541-9325-d68e231affba"
+    }
+    {
+    "status": "success",
+    "uuid": "b995c51b-3f7c-4705-ad2b-6534aa3735a6"
+    }
+    {
+    "status": "success",
+    "uuid": "b4b66ea8-bc5f-453a-aae7-1e45760e8a65"
+    }
     ```
 
-    ![Test retry GET](media/retry_http_post.png)
+3. Read the messages via HTTP GET from `facade-service`.
 
-    ```bash
-    curl -X GET http://localhost:5000/facade
+    ```shell
+    chmod +x scripts/send_get_req.sh
+    ./scripts/send_get_req.sh
     ```
 
-    ![Test retry GET](media/retry_http_get.png)
+    <img src="media/send_get_req/send_get_req.png" alt="" width="400"/>
+
+4. Testing the system.
+
+    Shut down 1 or 2 instances of the `logging-service` as well as Hazelcast nodes and check if we can read the messages.
+
+    **Shutting down 1 node:**
+
+    ```shell
+    chmod +x scripts/test_shut_down.sh
+    ./scripts/test_shut_down.sh 1
+    ```
+
+    <img src="media/shut_down/one_proc/shut_down.png" alt="" width="400"/>
+
+    <img src="media/shut_down/one_proc/hz_mc_1.png" alt="" width="400"/>
+
+    <img src="media/shut_down/one_proc/hz_mc_2.png" alt="" width="400"/>
+
+    <img src="media/shut_down/one_proc/hz_mc_3.png" alt="" width="400"/>
+
+    Then run HTTP GET and POST requests:
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    <img src="media/shut_down/one_proc/send_get_req.png" alt="" width="400"/>
+
+    ```shell
+    ./scripts/send_post_req.sh
+    ```
+
+    <img src="media/shut_down/one_proc/send_post_req.png" alt="" width="400"/>
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    <img src="media/shut_down/one_proc/send_get_req_2.png" alt="" width="400"/>
+
+    <img src="media/shut_down/one_proc/hz_mc_4.png" alt="" width="400"/>
+
+    <img src="media/shut_down/one_proc/hz_mc_5.png" alt="" width="400"/>
+
+    <img src="media/shut_down/one_proc/hz_mc_6.png" alt="" width="400"/>
+
+    To be sure that there are no same sreenshots you can open logs in `scripts/logs`.
+
+    **Shutting down 2 nodes:**
+
+    ```shell
+    ./scripts/test_shut_down.sh 2
+    ```
+
+    <img src="media/shut_down/two_procs/shut_down.png" alt="" width="400"/>
+
+    <img src="media/shut_down/two_procs/hz_mc_1.png" alt="" width="400"/>
+
+    <img src="media/shut_down/two_procs/hz_mc_2.png" alt="" width="400"/>
+
+    <img src="media/shut_down/two_procs/hz_mc_3.png" alt="" width="400"/>
+
+    Then run HTTP GET and POST requests:
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    <img src="media/shut_down/two_procs/send_get_req.png" alt="" width="400"/>
+
+    ```shell
+    ./scripts/send_post_req.sh
+    ```
+
+    <img src="media/shut_down/two_procs/send_post_req.png" alt="" width="400"/>
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    <img src="media/shut_down/two_procs/send_get_req_2.png" alt="" width="400"/>
+
+    <img src="media/shut_down/two_procs/hz_mc_4.png" alt="" width="400"/>
+
+    <img src="media/shut_down/two_procs/hz_mc_5.png" alt="" width="400"/>
+
+    To be sure that there are no same sreenshots you can open logs in `scripts/logs`.
+
+5. Stop the system.
+
+    ```shell
+    chmod +x scripts/kill.sh
+    ./scripts/kill.sh
+    ```
 
 ### Resources
 
-- [Microservices basics task demo](https://youtu.be/w5EBi2nT_B0?si=VsBAShgPBd7piEKG)
+- [Microservices with Hazelcast task demo](https://youtu.be/D4mkt6t1Nzk)
 - [Curl requests](https://www.warp.dev/terminus/curl-post-request)

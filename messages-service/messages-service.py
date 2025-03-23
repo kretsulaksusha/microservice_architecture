@@ -3,6 +3,7 @@
 
 For now acting as a stub, when accessed, it returns a static message.
 """
+import argparse
 from flask import Flask
 
 app = Flask(__name__)
@@ -18,4 +19,8 @@ def get_message():
     return "not implemented yet"
 
 if __name__ == '__main__':
-    app.run(port=5002, debug=True)
+    parser = argparse.ArgumentParser(description="Messages service")
+    parser.add_argument('--port', type=int, default=5001, help='Port to run the service on')
+    args = parser.parse_args()
+
+    app.run(port=args.port, debug=True)
