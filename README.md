@@ -2,47 +2,61 @@
 
 Github: [Microservice architecture](https://github.com/kretsulaksusha/microservice_architecture.git)
 
-## Task 3. Microservices using Hazelcast Distributed Map
+## Task 4. Microservices using Message Queue
 
-Github: [Microservice architecture. Task 3](https://github.com/kretsulaksusha/microservice_architecture/tree/micro_hazelcast)
+Github: [Microservice architecture. Task 4](https://github.com/kretsulaksusha/microservice_architecture/tree/micro_mq)
 
-The task is based on the first task and is its development.
+The task is based on the functionality developed in the previous task and is its further development.
 
-The following should be added to the `logging-service`:
-- as a message store use Hazelcast Distributed Map
-- the ability to run multiple copies of the `logging-service` at the same time
-- `facade-service` randomly selects which copy of the `logging-service` to access to write and read messages
+To `messages-service` you need to add:
 
-### Basic system functionality
+- message queue as a message delivery channel between `facade-service` and `messages-service`
+- the ability to run multiple copies of `messages-service` simultaneously
+- `facade-service` randomly selects which copy of `messages-service` to access to read messages
+
+It is suggested to use as a Messaging queue:
+
+- [Hazelcast Queue](https://docs.hazelcast.com/hazelcast/5.5/data-structures/queue) (5 points) or
+- [Kafka](https://hub.docker.com/r/apache/kafka) (10 points)
+
+### System functionality
 
 The client interacts with the `facade-service` via HTTP POST and GET requests. The client can be curl, Postman, a browser in Dev mode, etc.
 
-- A new Hazelcast instance is started when the `logging-service` is launched (or the Hazelcast client connects to its Hazelcast cluster node)
-- The `logging-service` uses the Hazelcast Distributed Map to store messages instead of the local hash table
-- the `facade-service` with which the client interacts randomly selects a `logging-service` instance when sending POST/GET (GRPC) requests
-- if the selected `logging-service` instance is not available, the next one is selected, etc.
+- It is necessary to deploy a Messaging queue cluster - Hazelcast Distributed Queue (2 servers are enough) or Kafka (3 servers are required) and configure queue replication (see below)
+- When a POST request is received by `facade-service`, it should add the message from the request to the message queue
+- Copies of the `messages-service` should read the messages (producer/consumer scheme) and store them in memory
+- during a GET request, the `facade-service` with which the client interacts randomly selects a `messages-service` instance and returns all messages stored on this instance via the REST (HTTP) protocol
 
-![Basic Functionality](media/task/basic_functionality.png)
+![System Functionality](media/task/system_functionality.png)
 
 ### Task
 
-- Start 3 instances of the `logging-service` (locally they can run on different ports), respectively, 3 instances of Hazelcast should also be started.
-- Using HTTP POST, write 10 messages msg1-msg10 through the `facade-service`.
-- Show which messages each of the `logging-service` instances received (this should be visible in the service logs).
-- Read the messages via HTTP GET from `facade-service`.
-- Shut down 1 or 2 instances of the `logging-service` (Hazelcast nodes should be shut down as well) and check if we can read the messages.
+- Start 3 instances of `logging-service` (locally they can be run on different ports), respectively, 3 instances of Hazelcast should also start
+- Run 2 instances of `messages-service` (locally they can be run on different ports)
+- Write 10 messages msg1-msg10 via HTTP POST through `facade-service`
+- Show which messages each of the `logging-service` instances received (this should be visible in the service logs)
+- Show what messages each of the `messages-service` instances received (this should be visible in the service logs)
+- Call HTTP GET on `facade-service` several times and get the combined 2 sets of messages - these should be messages from `logging-service` and `messages-service`
 
-### Additional system functionality
+### Checking the fault tolerance of a message queue
 
-Due to the fact that there may now be several running instances of the `logging-service`, the `facade-service` must know their IP addresses to access them. The list of IP addresses can be contained in the code of the `facade-service` itself or passed to it at startup, but this approach is not flexible in case of dynamic assignment or change of these addresses.
+A classic message queue stores the messages added to it on its side, so if its server suddenly goes down, the messages contained in the queue will become inaccessible and may be lost altogether.
 
-Therefore, it is proposed to include information about the IP addresses of other microservices in a separate registry, which will be managed by the `config-server` (later it will be replaced by Service registry and discovery).
+To prevent this, it is recommended to set up a cluster for the message queue, i.e. run several servers and set up replication (or backup for Hazelcast) between them. Now, if one server from the message queue cluster goes down, messages will be available from its replica
 
-Now, before accessing the `logging-service` and `messages-service`, the `facade-service` must make a request to the `config-server`, where it will be returned a list of all IP addresses of instances of this service by the service name.
+In this work, you need to configure such a cluster for Hazelcast (or Kafka) and test its fault tolerance.
 
-![Additional Functionality](media/task/additional.png)
+To test the fault tolerance, you will need to verify that there will be no loss of messages if one of the message queue servers goes down.
 
-The list of IP addresses of microservices on the `config-server` can be taken from the configuration file or passed from the command line when it is launched.
+To do this:
+
+- do not run (disable) 2 instances of `messages-service` so that messages are not temporarily read and stored in the message queue
+- send 10 (or 100) messages through the `facade-service`
+- switch off one of the servers (message queue)
+  - for Hazelcast, it should be a server with a lower IP address
+  - for Kafka, it should be the so-called Leader
+- start 2 instances of `messages-service` and check that they received all messages from the queue
 
 ## Prerequisites
 
@@ -50,38 +64,15 @@ The list of IP addresses of microservices on the `config-server` can be taken fr
 
 ### Installation
 
-```
+```text
 git clone https://github.com/kretsulaksusha/microservice_architecture.git
 cd microservice_architecture
-git checkout micro_hazelcast
+git checkout micro_mq
 ```
 
 ### Project structure
 
-```
-.
-├── README.md
-├── config-server
-│   └── config-server.py
-├── config.toml
-├── facade-service
-│   └── facade-service.py
-├── hazelcast-client.xml
-├── logging-service
-│   └── logging-service.py
-├── media
-│   └── ...
-├── messages-service
-│   └── messages-service.py
-└── scripts
-    ├── kill.sh
-    ├── launch.sh
-    ├── logs
-    │   ├── send_get_req_log.txt
-    │   └── send_post_req_log.txt
-    ├── send_get_req.sh
-    ├── send_post_req.sh
-    └── test_shut_down.sh
+```text
 ```
 
 ### Usage
@@ -92,38 +83,43 @@ The `config.toml` file holds all the essential service IPs and Hazelcast cluster
 
 1. Services Configuration (`[service_ips]`)
 
-This section defines IPs and ports for the core microservices:
+    This section defines IPs and ports for the core microservices:
 
-```toml
-[service_ips]
-messages-service = ["127.0.0.1:5001"]
-logging-service = ["127.0.0.1:5002", "127.0.0.1:5003", "127.0.0.1:5004"]
-```
+    ```toml
+    [service_ips]
+    messages-service = ["127.0.0.1:5001", "127.0.0.1:5002"]
+    logging-service = ["127.0.0.1:5003", "127.0.0.1:5004", "127.0.0.1:5005"]
+    ```
 
 2. Hazelcast Configuration (`[hazelcast]`)
 
-This section sets up the Hazelcast cluster:
+    This section sets up the Hazelcast cluster:
 
-```toml
-[hazelcast]
-hazelcast-cluster-name = "microservice"
-hazelcast-clients = ["127.0.0.1:5701", "127.0.0.1:5702", "127.0.0.1:5703"]
-```
+    ```toml
+    [hazelcast]
+    hazelcast-cluster-name = "microservice"
+    hazelcast-clients = ["127.0.0.1:5701", "127.0.0.1:5702", "127.0.0.1:5703"]
+    ```
 
 Feel free to modify IPs and cluster settings.
 
 #### System
 
+At first we need to set the permissions with the command:
+
+```shell
+chmod -R +x scripts
+```
+
 1. To launch the system we need to start:
     - a `facade-service`;
-    - a `messages-service`;
+    - 2 instances of the `messages-service`;
     - 3 instances of the `logging-service`;
     - 3 instances of Hazelcast nodes.
 
     This can be done by running the script `scripts/launch.sh`:
 
     ```shell
-    chmod +x scripts/launch.sh
     ./scripts/launch.sh
     ```
 
@@ -138,64 +134,64 @@ Feel free to modify IPs and cluster settings.
     In the terminal we will observe limited information that the messages are sent. For verbose version all output is written to the file stored in `scripts/logs` directory. Also, `facade-service` will log which messages each of the `logging-service` instances received.
 
     ```shell
-    chmod +x scripts/send_post_req.sh
     ./scripts/send_post_req.sh
     ```
 
 3. Read the messages via HTTP GET from `facade-service`.
 
-    ```shell
-    chmod +x scripts/send_get_req.sh
-    ./scripts/send_get_req.sh
-    ```
-
-4. Testing the system.
-
-    Shut down 1 or 2 instances of the `logging-service` as well as Hazelcast nodes and check if we can read the messages.
-
-    ```shell
-    chmod +x scripts/test_shut_down.sh
-    ./scripts/test_shut_down.sh 1
-    ```
-
-    Then run HTTP GET and POST requests:
+    We need to call HTTP GET on `facade-service` several times to get the combined 2 sets of messages from `messages-service`.
 
     ```shell
     ./scripts/send_get_req.sh
     ```
+
+4. Testing fault tolerance.
+
+    Verify that there will be no loss of messages if one of the message queue servers goes down.
+
+    Do not run (disable) 2 instances of `messages-service` so that messages are not temporarily read and stored in the message queue:
+
+    ```shell
+    ./scripts/launch_no_messages_services.sh
+    ```
+
+    Send 10 (or 100) messages through the `facade-service`:
 
     ```shell
     ./scripts/send_post_req.sh
     ```
 
+    Switch off one of the servers (message queue):
+
+    ```shell
+    ./scripts/test_shut_down.sh 1
+    ```
+
+    > Note: for Hazelcast it should be a server with a lower IP address.
+
+    Start 2 instances of `messages-service` and check that they received all messages from the queue:
+
+    ```shell
+    ./scripts/test_start_messages_services.sh
+    ```
+
     ```shell
     ./scripts/send_get_req.sh
     ```
 
-    Relaunch the system and run the same command but know shut down 2 services:
-
-    ```shell
-    chmod +x scripts/test_shut_down.sh
-    ./scripts/test_shut_down.sh 2
-    ```
-
-    Then run POST and GET requests.
-
 5. Stop the system.
 
     ```shell
-    chmod +x scripts/kill.sh
     ./scripts/kill.sh
     ```
 
 ### Results
 
-The application was tested as described in the Usage section. Below are the results:
+The application was tested as described in the Usage -> System section. Below are the results:
 
 1. Launching the system:
 
     ```shell
-    chmod +x scripts/launch.sh
     ./scripts/launch.sh
     ```
 
@@ -207,10 +203,11 @@ The application was tested as described in the Usage section. Below are the resu
 
     <img src="media/hz_mc.png" alt="" width="200"/>
 
-2. Using HTTP POST we can write 10 messages msg1-msg10 through the `facade-service`. In the terminal we will observe limited information that the message is sent.
+2. Using HTTP POST we can write 10 messages msg1-msg10 through the `facade-service`.
+
+    In the terminal we will observe limited information that the messages are sent. For verbose version all output is written to the file stored in `scripts/logs` directory. Also, `facade-service` will log which messages each of the `logging-service` instances received.
 
     ```shell
-    chmod +x scripts/send_post_req.sh
     ./scripts/send_post_req.sh
     ```
 
@@ -226,154 +223,77 @@ The application was tested as described in the Usage section. Below are the resu
 
     Content of `scripts/logs/`:
 
-    ```
-    Logging time: 24-03-2025 00:17:11
-    {
-    "status": "success",
-    "uuid": "c04efb3c-3ddd-4a65-a7eb-4a78634debf4"
-    }
-    {
-    "status": "success",
-    "uuid": "5ac75e3d-65a5-4de8-b2c6-314e010dd29c"
-    }
-    {
-    "status": "success",
-    "uuid": "a7bb5027-39cc-4600-9120-db14a57f908f"
-    }
-    {
-    "status": "success",
-    "uuid": "44b9d397-c5c7-4066-a098-1362f4057b79"
-    }
-    {
-    "status": "success",
-    "uuid": "2cce74e5-5698-4597-9149-78cc328580ef"
-    }
-    {
-    "status": "success",
-    "uuid": "829e3694-1dc0-4a4a-b4d1-c8a2ed1f5d69"
-    }
-    {
-    "status": "success",
-    "uuid": "6e27eabe-de9c-43e9-811b-fa1e18eb6f9a"
-    }
-    {
-    "status": "success",
-    "uuid": "e6035a94-2f88-4541-9325-d68e231affba"
-    }
-    {
-    "status": "success",
-    "uuid": "b995c51b-3f7c-4705-ad2b-6534aa3735a6"
-    }
-    {
-    "status": "success",
-    "uuid": "b4b66ea8-bc5f-453a-aae7-1e45760e8a65"
-    }
+    ```text
     ```
 
 3. Read the messages via HTTP GET from `facade-service`.
 
+    We need to call HTTP GET on `facade-service` several times to get the combined 2 sets of messages from `messages-service`.
+
     ```shell
-    chmod +x scripts/send_get_req.sh
     ./scripts/send_get_req.sh
     ```
 
     <img src="media/send_get_req/send_get_req.png" alt="" width="400"/>
 
-4. Testing the system.
+4. Testing fault tolerance.
 
-    Shut down 1 or 2 instances of the `logging-service` as well as Hazelcast nodes and check if we can read the messages.
+    Verify that there will be no loss of messages if one of the message queue servers goes down.
 
-    **Shutting down 1 node:**
+    Do not run (disable) 2 instances of `messages-service` so that messages are not temporarily read and stored in the message queue:
 
     ```shell
-    chmod +x scripts/test_shut_down.sh
+    ./scripts/launch_no_messages_services.sh
+    ```
+
+    <img src="media/fault_tolerance/no_messages_service_hz_mc.png" alt="" width="400"/>
+
+    Send 10 (or 100) messages through the `facade-service`:
+
+    ```shell
+    ./scripts/send_post_req.sh
+    ```
+
+    <img src="media/fault_tolerance/send_post_req.png" alt="" width="400"/>
+
+    Switch off one of the servers (message queue):
+
+    ```shell
     ./scripts/test_shut_down.sh 1
     ```
 
-    <img src="media/shut_down/one_proc/shut_down.png" alt="" width="400"/>
+    > Note: for Hazelcast it should be a server with a lower IP address.
 
-    <img src="media/shut_down/one_proc/hz_mc_1.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/shut_down.png" alt="" width="400"/>
 
-    <img src="media/shut_down/one_proc/hz_mc_2.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/hz_mc_1.png" alt="" width="400"/>
 
-    <img src="media/shut_down/one_proc/hz_mc_3.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/hz_mc_2.png" alt="" width="400"/>
 
-    Then run HTTP GET and POST requests:
+    <img src="media/fault_tolerance/hz_mc_3.png" alt="" width="400"/>
+
+    Start 2 instances of `messages-service` and check that they received all messages from the queue:
+
+    ```shell
+    ./scripts/test_start_messages_services.sh
+    ```
+
+    <img src="media/fault_tolerance/2_messages_service_hz_mc.png" alt="" width="400"/>
 
     ```shell
     ./scripts/send_get_req.sh
     ```
 
-    <img src="media/shut_down/one_proc/send_get_req.png" alt="" width="400"/>
-
-    ```shell
-    ./scripts/send_post_req.sh
-    ```
-
-    <img src="media/shut_down/one_proc/send_post_req.png" alt="" width="400"/>
-
-    ```shell
-    ./scripts/send_get_req.sh
-    ```
-
-    <img src="media/shut_down/one_proc/send_get_req_2.png" alt="" width="400"/>
-
-    <img src="media/shut_down/one_proc/hz_mc_4.png" alt="" width="400"/>
-
-    <img src="media/shut_down/one_proc/hz_mc_5.png" alt="" width="400"/>
-
-    <img src="media/shut_down/one_proc/hz_mc_6.png" alt="" width="400"/>
-
-    To be sure that there are no same sreenshots you can open logs in `scripts/logs`.
-
-    **Shutting down 2 nodes:**
-
-    ```shell
-    ./scripts/test_shut_down.sh 2
-    ```
-
-    <img src="media/shut_down/two_procs/shut_down.png" alt="" width="400"/>
-
-    <img src="media/shut_down/two_procs/hz_mc_1.png" alt="" width="400"/>
-
-    <img src="media/shut_down/two_procs/hz_mc_2.png" alt="" width="400"/>
-
-    <img src="media/shut_down/two_procs/hz_mc_3.png" alt="" width="400"/>
-
-    Then run HTTP GET and POST requests:
-
-    ```shell
-    ./scripts/send_get_req.sh
-    ```
-
-    <img src="media/shut_down/two_procs/send_get_req.png" alt="" width="400"/>
-
-    ```shell
-    ./scripts/send_post_req.sh
-    ```
-
-    <img src="media/shut_down/two_procs/send_post_req.png" alt="" width="400"/>
-
-    ```shell
-    ./scripts/send_get_req.sh
-    ```
-
-    <img src="media/shut_down/two_procs/send_get_req_2.png" alt="" width="400"/>
-
-    <img src="media/shut_down/two_procs/hz_mc_4.png" alt="" width="400"/>
-
-    <img src="media/shut_down/two_procs/hz_mc_5.png" alt="" width="400"/>
-
-    To be sure that there are no same sreenshots you can open logs in `scripts/logs`.
+    <img src="media/fault_tolerance/send_get_req.png" alt="" width="400"/>
 
 5. Stop the system.
 
     ```shell
-    chmod +x scripts/kill.sh
     ./scripts/kill.sh
     ```
 
 ### Resources
 
-- [Microservices with Hazelcast task demo](https://youtu.be/D4mkt6t1Nzk)
+- [Youtube video. Practical tasks and Project description. Task 4](https://youtu.be/FHSX10qWwBU?si=BBa1HlqGdktM-cZs&t=2945)
 - [Curl requests](https://www.warp.dev/terminus/curl-post-request)
+- [Hazelcast. Queue](https://docs.hazelcast.com/hazelcast/5.5/data-structures/queue)

@@ -1,6 +1,6 @@
 [service_ips]
-messages-service = ["127.0.0.1:5001"]
-logging-service = ["127.0.0.1:5002", "127.0.0.1:5003", "127.0.0.1:5004"]
+messages-service = ["127.0.0.1:5001", "127.0.0.1:5002"]
+logging-service = ["127.0.0.1:5003", "127.0.0.1:5004", "127.0.0.1:5005"]
 
 [hazelcast]
 hazelcast-cluster-name = "microservice"

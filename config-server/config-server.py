@@ -46,7 +46,7 @@ def get_service_ips(service_name):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Config service")
-    parser.add_argument('--port', type=int, default=5005, help='Port to run the service on')
+    parser.add_argument('--port', type=int, default=5006, help='Port to run the service on')
     parser.add_argument('--service-ips', type=str,
                         help='Comma separated list of service names and their IPs\n'
                         'separated by a space (<service IP>).'

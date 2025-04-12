@@ -1,7 +1,7 @@
 #!/bin/bash
 # Use to print each step: #!/bin/bash -x
 
-PORTS=(5000 5001 5002 5003 5004 5005 5701 5702 5703)
+PORTS=(5000 5001 5002 5003 5004 5005 5006 5701 5702 5703)
 
 ALL_PROCESSES=()
 

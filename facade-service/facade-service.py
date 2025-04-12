@@ -9,11 +9,89 @@ import random
 import argparse
 from flask import Flask, request, jsonify
 import requests
+import hazelcast
 
 app = Flask(__name__)
 
-CONFIG_SERVER_URL = "http://127.0.0.1:5005/config"
+CONFIG_SERVER_URL = "http://127.0.0.1:5006/config"
 SERVICES_IPS = {}
+CLIENT = None
+MESSAGES_QUEUE = None
+RETRIES = 3
+DELAY = 2
+
+
+def get_service_data(service_name: str, path: str):
+    """
+    Getting service data from config server.
+    """
+    service_ips = list(SERVICES_IPS.get(service_name))
+    num_services = len(service_ips)
+    service_ip = random.choice(service_ips)
+    service_ips.remove(service_ip)
+    url = f"http://{service_ip}/{path}"
+
+    while num_services:
+        for attempt in range(RETRIES):
+            try:
+                response = requests.get(url, timeout=10)
+
+                if response.status_code == 200:
+                    return response.json()
+
+            except requests.exceptions.RequestException as e:
+                print(f"Attempt {attempt + 1} failed: {e}")
+                if attempt < RETRIES - 1:
+                    time.sleep(DELAY)
+
+        if num_services == 1:
+            print(f"All {service_name} ports are unavailable after retries.")
+            break
+
+        print(f"Port {service_ip} is unavailable after retries. Selecting another port...")
+        service_ip = random.choice(service_ips)
+        service_ips.remove(service_ip)
+        url = f"http://{service_ip}/{path}"
+        num_services -= 1
+
+    return None
+
+
+def post_data_to_service(service_name: str, path: str, payload: dict):
+    """
+    Posting data to service.
+    """
+    service_ips = list(SERVICES_IPS.get(service_name))
+    num_services = len(service_ips)
+    service_ip = random.choice(service_ips)
+    service_ips.remove(service_ip)
+    url = f"http://{service_ip}/{path}"
+
+    while num_services:
+        for attempt in range(RETRIES):
+            try:
+                response = requests.post(url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    print(f"Message: {payload['msg']} was posted to {url}.")
+                    return "success"
+
+            except requests.exceptions.RequestException as e:
+                print(f"Attempt {attempt + 1} failed: {e}")
+                if attempt < RETRIES - 1:
+                    time.sleep(DELAY)
+
+        if num_services == 1:
+            print("All port are unavailable after retries.")
+            break
+
+        print(f"Port {service_ip} is unavailable after retries. Selecting another port...")
+        service_ip = random.choice(service_ips)
+        service_ips.remove(service_ip)
+        url = f"http://{service_ip}/{path}"
+        num_services -= 1
+
+    return None
+
 
 def get_logging_service_ips():
     """
@@ -68,6 +146,57 @@ def get_services_ips():
     return "success", "Services IPs loaded successfully"
 
 
+def get_hazelcast_service_ips(property_name: str):
+    """
+    Function to initialize the service IPs from command-line arguments
+    """
+    global CONFIG_SERVER_URL
+
+    try:
+        response = requests.get(f"{CONFIG_SERVER_URL}/{property_name}", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("{property_name}", "")
+
+        print(f"Failed to get {property_name} IPs from config server. Status: {response.status_code}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting {property_name} IPs from config server: {e}")
+
+
+def initialize_hazelcast():
+    """
+    Initializing hazelcast.
+    """
+    global CLIENT
+    global MESSAGES_QUEUE
+
+    hazelcast_cluster_name = ""
+    cluster_members = []
+
+    # Get hazelcast-cluster-name IPs from config server
+    hazelcast_cluster_name = get_hazelcast_service_ips("hazelcast-cluster-name")
+    if hazelcast_cluster_name is None:
+        return "failure", "No Hazelcast cluster name"
+
+    # Get hazelcast-clients IPs from config server
+    cluster_members = get_hazelcast_service_ips("hazelcast-clients")
+    if cluster_members is None:
+        return "failure", "No Hazelcast cluster name"
+
+    CLIENT = hazelcast.HazelcastClient(
+        cluster_name=hazelcast_cluster_name,
+        cluster_members=cluster_members,
+        lifecycle_listeners=[
+            lambda state: print("Lifecycle event >>>", state),
+        ]
+    )
+
+    MESSAGES_QUEUE = CLIENT.get_queue("messages-queue").blocking()
+
+    return "success", "Hazelcast IPs loaded successfully"
+
+
 @app.route('/facade', methods=['POST'])
 def facade_post():
     """
@@ -91,41 +220,17 @@ def facade_post():
     if not msg:
         return jsonify({"status": "failure", "message": "No message provided"}), 400
 
+    # Putting the message in the queue
+    MESSAGES_QUEUE.offer(msg)
+
+    # Generate a unique UUID for the message
     uuid_val = str(uuid.uuid4())
     payload = {"uuid": uuid_val, "msg": msg}
 
-    retries = 3
-    delay = 2    # delay between retries in seconds
-
-    # Selecting port
-    logging_service_ips = list(SERVICES_IPS.get("logging-service"))
-    num_logging_services = len(logging_service_ips)
-    logging_service_ip = random.choice(logging_service_ips)
-    logging_service_ips.remove(logging_service_ip)
-    logging_url = f"http://{logging_service_ip}/log"
-
-    while num_logging_services:
-        for attempt in range(retries):
-            try:
-                response = requests.post(logging_url, json=payload, timeout=10)
-                if response.status_code == 200:
-                    print(f"Message: {msg} was posted to {logging_url}.")
-                    return jsonify({"status": "success", "uuid": uuid_val}), 200
-
-            except requests.exceptions.RequestException as e:
-                print(f"Attempt {attempt + 1} failed: {e}")
-                if attempt < retries - 1:
-                    time.sleep(delay)
-
-        if num_logging_services == 1:
-            print("All port are unavailable after retries.")
-            break
-
-        print(f"Port {logging_service_ip} is unavailable after retries. Selecting another port...")
-        logging_service_ip = random.choice(logging_service_ips)
-        logging_service_ips.remove(logging_service_ip)
-        logging_url = f"http://{logging_service_ip}/log"
-        num_logging_services -= 1
+    # Selecting port for logging service
+    status = post_data_to_service("logging-service", "log", payload)
+    if status == "success":
+        return jsonify({"status": "success", "uuid": uuid_val}), 200
 
     return jsonify({"status": "failure", "message": "Failed to log message after retries"}), 500
 
@@ -145,44 +250,14 @@ def facade_get():
         A response containing all logged messages and a static message from the messages service.
         If the request fails after retries, returns a failure response.
     """
-    retries = 3
-    delay = 2    # delay between retries in seconds
+    # Selecting port for logging service
+    logs = get_service_data("logging-service", "log")
 
-    # Selecting port
-    logging_service_ips = list(SERVICES_IPS.get("logging-service"))
-    num_logging_services = len(logging_service_ips)
-    logging_service_ip = random.choice(logging_service_ips)
-    logging_service_ips.remove(logging_service_ip)
-    logging_url = f"http://{logging_service_ip}/log"
+    # Selecting port for messaging service
+    messages = get_service_data("messages-service", "messages")
 
-    messaging_service_ips = list(SERVICES_IPS.get("messages-service"))
-    messaging_url = f"http://{messaging_service_ips[0]}/message"
-
-    while num_logging_services:
-        for attempt in range(retries):
-            try:
-                logging_response = requests.get(logging_url, timeout=10)
-                message_response = requests.get(messaging_url, timeout=10)
-
-                if logging_response.status_code == 200 and message_response.status_code == 200:
-                    logs = logging_response.json()
-                    message = message_response.text
-                    return jsonify({"logs": logs, "message": message}), 200
-
-            except requests.exceptions.RequestException as e:
-                print(f"Attempt {attempt + 1} failed: {e}")
-                if attempt < retries - 1:
-                    time.sleep(delay)
-
-        if num_logging_services == 1:
-            print("All port are unavailable after retries.")
-            break
-
-        print(f"Port {logging_service_ip} is unavailable after retries. Selecting another port...")
-        logging_service_ip = random.choice(logging_service_ips)
-        logging_service_ips.remove(logging_service_ip)
-        logging_url = f"http://{logging_service_ip}/log"
-        num_logging_services -= 1
+    if logs is not None and messages is not None:
+        return jsonify({"logs": logs, "message": messages}), 200
 
     return jsonify({"status": "failure", "message": "Service unavailable after retries"}), 500
 
@@ -192,9 +267,14 @@ if __name__ == '__main__':
     parser.add_argument('--port', type=int, default=5000, help='Port to run the service on')
     args = parser.parse_args()
 
-    status = ""
-    while status != "success":
+    STATUS = ""
+    while STATUS != "success":
         print("Getting services IPs...")
-        status, _ = get_services_ips()
+        STATUS, _ = get_services_ips()
+
+    STATUS = ""
+    while STATUS != "success":
+        print("Initializing Hazelcast...")
+        STATUS, _ = initialize_hazelcast()
 
     app.run(port=args.port, debug=True)

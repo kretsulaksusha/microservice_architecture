@@ -10,14 +10,33 @@ import hazelcast
 
 app = Flask(__name__)
 
-CONFIG_SERVER_URL = "http://127.0.0.1:5005/config"
+CONFIG_SERVER_URL = "http://127.0.0.1:5006/config"
 CLIENT = None
 MESSAGES_MAP = None
+PORT = None
 
 
-def initialize_hazelcast_clients():
+def get_hazelcast_service_ips(property_name: str):
     """
-    Initializing hazelcast clients.
+    Function to initialize the service IPs from command-line arguments
+    """
+    global CONFIG_SERVER_URL
+
+    try:
+        response = requests.get(f"{CONFIG_SERVER_URL}/{property_name}", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("{property_name}", "")
+
+        print(f"Failed to get {property_name} IPs from config server. Status: {response.status_code}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error getting {property_name} IPs from config server: {e}")
+
+
+def initialize_hazelcast():
+    """
+    Initializing hazelcast.
     """
     global CLIENT
     global MESSAGES_MAP
@@ -25,31 +44,15 @@ def initialize_hazelcast_clients():
     hazelcast_cluster_name = ""
     cluster_members = []
 
-    try:
-        response = requests.get(f"{CONFIG_SERVER_URL}/hazelcast-cluster-name", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            hazelcast_cluster_name = data.get("hazelcast-cluster-name", "")
-        else:
-            print(f"Failed to get hazelcast-cluster-name IPs from config server. Status: {response.status_code}")
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting hazelcast-cluster-name IPs from config server: {e}")
-
-    if not hazelcast_cluster_name:
+    # Get hazelcast-cluster-name IPs from config server
+    hazelcast_cluster_name = get_hazelcast_service_ips("hazelcast-cluster-name")
+    if hazelcast_cluster_name is None:
         return "failure", "No Hazelcast cluster name"
 
-    try:
-        response = requests.get(f"{CONFIG_SERVER_URL}/hazelcast-clients", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            cluster_members = data.get("hazelcast-clients", [])
-        else:
-            print(f"Failed to get hazelcast-clients IPs from config server. Status: {response.status_code}")
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting hazelcast-clients IPs from config server: {e}")
-
-    if not cluster_members:
-        return "failure", "No Hazelcast cluster members"
+    # Get hazelcast-clients IPs from config server
+    cluster_members = get_hazelcast_service_ips("hazelcast-clients")
+    if cluster_members is None:
+        return "failure", "No Hazelcast cluster name"
 
     CLIENT = hazelcast.HazelcastClient(
         cluster_name=hazelcast_cluster_name,
@@ -83,7 +86,7 @@ def post_message():
     msg = data.get('msg')
     if uuid and msg:
         MESSAGES_MAP.put(uuid, msg)
-        print(f"Logged message: {msg}")
+        print(f"Logging-service logged message on port {PORT}: {msg}")
         return jsonify({"status": "success"}), 200
     return jsonify({"status": "failure"}), 400
 
@@ -100,12 +103,13 @@ def get_messages():
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Logging service")
-    parser.add_argument('--port', type=int, default=5002, help='Port to run the service on')
+    parser.add_argument('--port', type=int, default=5003, help='Port to run the service on')
     args = parser.parse_args()
+    PORT = args.port
 
-    status = ""
-    while status != "success":
-        print("Getting Hazelcast client IPs...")
-        status, _ = initialize_hazelcast_clients()
+    STATUS = ""
+    while STATUS != "success":
+        print("Initializing Hazelcast...")
+        STATUS, _ = initialize_hazelcast()
 
     app.run(port=args.port, debug=True)

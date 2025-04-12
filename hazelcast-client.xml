@@ -21,4 +21,11 @@
         <async-backup-count>1</async-backup-count>
     </map>
 
+    <queue name="messages-queue">
+        <backup-count>1</backup-count>
+        <async-backup-count>1</async-backup-count>
+        <empty-queue-ttl>-1</empty-queue-ttl>
+        <statistics-enabled>true</statistics-enabled>
+    </queue>
+
 </hazelcast>

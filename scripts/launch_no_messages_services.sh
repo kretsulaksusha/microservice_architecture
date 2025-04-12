@@ -12,10 +12,6 @@ python3 config-server/config-server.py &
 # Port 5000
 python3 facade-service/facade-service.py &
 
-# Launch 2 instances of messages-service
-python3 messages-service/messages-service.py --port 5001 &
-python3 messages-service/messages-service.py --port 5002 &
-
 # Launch 3 instances of logging-service
 python3 logging-service/logging-service.py --port 5003 &
 python3 logging-service/logging-service.py --port 5004 &
