@@ -8,17 +8,28 @@ ALL_PROCESSES=()
 for PORT in "${PORTS[@]}"; do
     echo "Checking port $PORT..."
 
-    processes=$(lsof -ti tcp:$PORT -sTCP:LISTEN)
+    # Use process substitution to avoid subshell
+    while read -r line; do
+        process_name=$(echo "$line" | awk '{print $1}')
+        pid=$(echo "$line" | awk '{print $2}')
+        user=$(echo "$line" | awk '{print $3}')
+        name_field=$(echo "$line" | awk '{print $9}')
 
-    if [ -z "$processes" ]; then
-        echo "No processes are listening on port $PORT."
-    else
-        echo "Processes listening on port $PORT:"
-        lsof -i tcp:$PORT -sTCP:LISTEN -n -P
 
-        echo "Adding processes to kill list: $processes"
-        ALL_PROCESSES+=($processes)
-    fi
+        # Skip header line
+        if [[ "$process_name" == "COMMAND" ]]; then
+            continue
+        fi
+
+        # Condition: localhost bindings OR Hazelcast java process
+        if [[ "$name_field" == *"127.0.0.1"* || ( "$name_field" == "*"* && "$process_name" == "java" ) ]]; then
+            if [[ ! " ${ALL_PROCESSES[*]} " =~ " $pid " ]]; then
+                ALL_PROCESSES+=("$pid")
+                echo "Marked for kill: $process_name (PID $pid) - $name_field"
+            fi
+        fi
+    done < <(lsof -nP -i tcp:"$PORT" -sTCP:LISTEN 2>/dev/null)
+
     echo "----------------------------------------"
 done
 
@@ -28,7 +39,7 @@ if [ ${#ALL_PROCESSES[@]} -gt 0 ]; then
     echo "----------------------------------------"
 
     # Confirmation
-    read -p "Do you want to kill these processes? (y/n): " confirm
+    read -rp "Do you want to kill these processes? (y/n): " confirm
 
     if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
         kill ${ALL_PROCESSES[*]} & wait

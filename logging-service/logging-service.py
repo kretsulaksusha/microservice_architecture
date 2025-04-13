@@ -3,6 +3,8 @@
 
 Stores in memory all the messages it receives and can return them.
 """
+import sys
+import signal
 import argparse
 import requests
 from flask import Flask, request, jsonify
@@ -26,7 +28,7 @@ def get_hazelcast_service_ips(property_name: str):
         response = requests.get(f"{CONFIG_SERVER_URL}/{property_name}", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            return data.get("{property_name}", "")
+            return data.get(f"{property_name}", "")
 
         print(f"Failed to get {property_name} IPs from config server. Status: {response.status_code}")
         return None
@@ -52,7 +54,7 @@ def initialize_hazelcast():
     # Get hazelcast-clients IPs from config server
     cluster_members = get_hazelcast_service_ips("hazelcast-clients")
     if cluster_members is None:
-        return "failure", "No Hazelcast cluster name"
+        return "failure", "No Hazelcast cluster clients"
 
     CLIENT = hazelcast.HazelcastClient(
         cluster_name=hazelcast_cluster_name,
@@ -99,6 +101,22 @@ def get_messages():
         A list of all saved messages.
     """
     return jsonify(list(MESSAGES_MAP.values()))
+
+
+def shutdown_handler(signum, frame):
+    """
+    Signal handler to gracefully shut down the Hazelcast client and exit the program.
+    """
+    global CLIENT
+
+    print(f"Received signal {signum}. Shutting down Hazelcast client...")
+    if CLIENT:
+        CLIENT.shutdown()
+    sys.exit(0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
+signal.signal(signal.SIGTERM, shutdown_handler)  # kill command
 
 
 if __name__ == '__main__':

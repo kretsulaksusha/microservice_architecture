@@ -224,6 +224,47 @@ The application was tested as described in the Usage -> System section. Below ar
     Content of `scripts/logs/`:
 
     ```text
+    Logging time: 13-04-2025 19:56:45
+    {
+    "status": "success",
+    "uuid": "ea8239b4-4cdb-419f-88da-34c0327ae77c"
+    }
+    {
+    "status": "success",
+    "uuid": "0da8febb-f8a9-4548-91db-c471eeb659ee"
+    }
+    {
+    "status": "success",
+    "uuid": "8a4c97f5-9264-4b54-9825-54e0145ffb8c"
+    }
+    {
+    "status": "success",
+    "uuid": "d755a64f-44eb-41dd-b7ad-645a71a07cfb"
+    }
+    {
+    "status": "success",
+    "uuid": "5df61c9f-da28-4888-a14a-ccee40e787f8"
+    }
+    {
+    "status": "success",
+    "uuid": "e78b1eac-df9c-4f0e-8399-1b9d7e93908b"
+    }
+    {
+    "status": "success",
+    "uuid": "0c20445e-c4d2-4b92-beb1-f3faa14c57e9"
+    }
+    {
+    "status": "success",
+    "uuid": "fa944dc1-8665-4f79-ae24-e5040cdc304f"
+    }
+    {
+    "status": "success",
+    "uuid": "3cc393d8-d211-44dd-8d91-311f257a9dd2"
+    }
+    {
+    "status": "success",
+    "uuid": "e524549e-36e9-4a5f-be89-bd1d394c80ef"
+    }
     ```
 
 3. Read the messages via HTTP GET from `facade-service`.
@@ -234,7 +275,11 @@ The application was tested as described in the Usage -> System section. Below ar
     ./scripts/send_get_req.sh
     ```
 
-    <img src="media/send_get_req/send_get_req.png" alt="" width="400"/>
+    <img src="media/send_get_req/send_get_req_1.png" alt="" width="400"/>
+
+    <img src="media/send_get_req/send_get_req_2.png" alt="" width="400"/>
+
+    As we can see messages are read one by one by each instance of `messages-service`. The first one contains `msg` with odd numbers and the second one - even.
 
 4. Testing fault tolerance.
 
@@ -246,7 +291,7 @@ The application was tested as described in the Usage -> System section. Below ar
     ./scripts/launch_no_messages_services.sh
     ```
 
-    <img src="media/fault_tolerance/no_messages_service_hz_mc.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/no_messages_service_hz_mc.png" alt="" width="200"/>
 
     Send 10 (or 100) messages through the `facade-service`:
 
@@ -255,6 +300,16 @@ The application was tested as described in the Usage -> System section. Below ar
     ```
 
     <img src="media/fault_tolerance/send_post_req.png" alt="" width="400"/>
+
+    <img src="media/fault_tolerance/hz_mc_1.png" alt="" width="400"/>
+
+    <img src="media/fault_tolerance/hz_mc_2.png" alt="" width="500"/>
+
+    <img src="media/fault_tolerance/hz_mc_3.png" alt="" width="500"/>
+
+    Data in queue:
+
+    <img src="media/fault_tolerance/hz_mc_4.png" alt="" width="500"/>
 
     Switch off one of the servers (message queue):
 
@@ -266,11 +321,17 @@ The application was tested as described in the Usage -> System section. Below ar
 
     <img src="media/fault_tolerance/shut_down.png" alt="" width="400"/>
 
-    <img src="media/fault_tolerance/hz_mc_1.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/hz_mc_5.png" alt="" width="400"/>
 
-    <img src="media/fault_tolerance/hz_mc_2.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/hz_mc_6.png" alt="" width="400"/>
 
-    <img src="media/fault_tolerance/hz_mc_3.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/hz_mc_7.png" alt="" width="400"/>
+
+    Data in queue:
+
+    <img src="media/fault_tolerance/hz_mc_8.png" alt="" width="400"/>
+    
+    <img src="media/fault_tolerance/hz_mc_9.png" alt="" width="400"/>
 
     Start 2 instances of `messages-service` and check that they received all messages from the queue:
 
@@ -278,19 +339,69 @@ The application was tested as described in the Usage -> System section. Below ar
     ./scripts/test_start_messages_services.sh
     ```
 
-    <img src="media/fault_tolerance/2_messages_service_hz_mc.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/test_start_messages_services.png" alt="" width="400"/>
+
+    ```text
+    Messages-service received message on port 5001: msg1
+    Messages-service received message on port 5001: msg2
+    Messages-service received message on port 5001: msg3
+    Messages-service received message on port 5001: msg4
+    Messages-service received message on port 5001: msg5
+    Messages-service received message on port 5001: msg6
+    Messages-service received message on port 5001: msg7
+    Messages-service received message on port 5001: msg8
+    Messages-service received message on port 5001: msg9
+    Messages-service received message on port 5001: msg10
+    ```
+
+    As it can be seen, message-service on port 5001 was running quicker that on port 5002 so all the messages were read by the first one.
+
+    <img src="media/fault_tolerance/2_messages_service_hz_mc_1.png" alt="" width="400"/>
+
+    <img src="media/fault_tolerance/2_messages_service_hz_mc_2.png" alt="" width="400"/>
 
     ```shell
     ./scripts/send_get_req.sh
     ```
 
-    <img src="media/fault_tolerance/send_get_req.png" alt="" width="400"/>
+    <img src="media/fault_tolerance/send_get_req_1.png" alt="" width="400"/>
+
+    <img src="media/fault_tolerance/send_get_req_2.png" alt="" width="400"/>
+
+    **I tried another one and got the results below:**
+
+    <img src="media/fault_tolerance/test_start_messages_services_2.png" alt="" width="400"/>
+
+    ```text
+    Messages-service received message on port 5002: msg1
+    Messages-service received message on port 5001: msg2
+    Messages-service received message on port 5001: msg3
+    Messages-service received message on port 5002: msg4
+    Messages-service received message on port 5001: msg6
+    Messages-service received message on port 5002: msg5
+    Messages-service received message on port 5002: msg7
+    Messages-service received message on port 5001: msg8
+    Messages-service received message on port 5002: msg10
+    Messages-service received message on port 5001: msg9
+    ```
+
+    As it can be seen now, message-service instances consumed messages equally in terms of size.
+
+    ```shell
+    ./scripts/send_get_req.sh
+    ```
+
+    <img src="media/fault_tolerance/send_get_req_3.png" alt="" width="400"/>
+
+    <img src="media/fault_tolerance/send_get_req_4.png" alt="" width="400"/>
 
 5. Stop the system.
 
     ```shell
     ./scripts/kill.sh
     ```
+
+    <img src="media/fault_tolerance/kill.png" alt="" width="400"/>
 
 ### Resources
 
