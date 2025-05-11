@@ -4,36 +4,33 @@
 Stores in memory all the messages it receives and can return them.
 """
 import sys
+import os
+import time
+import json
 import signal
 import argparse
-import requests
 from flask import Flask, request, jsonify
 import hazelcast
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from consul_service.consul_service import get_key_value, register_service
+
 
 app = Flask(__name__)
 
-CONFIG_SERVER_URL = "http://127.0.0.1:5006/config"
+# CONFIG_SERVER_URL = "http://127.0.0.1:5006/config"
 CLIENT = None
 MESSAGES_MAP = None
 PORT = None
 
 
-def get_hazelcast_service_ips(property_name: str):
+def get_hazelcast_config(key: str):
     """
-    Function to initialize the service IPs from command-line arguments
+    Get Hazelcast config values from Consul KV store.
     """
-    global CONFIG_SERVER_URL
-
-    try:
-        response = requests.get(f"{CONFIG_SERVER_URL}/{property_name}", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get(f"{property_name}", "")
-
-        print(f"Failed to get {property_name} IPs from config server. Status: {response.status_code}")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting {property_name} IPs from config server: {e}")
+    value = get_key_value(f"hazelcast/{key}")
+    if value:
+        return json.loads(value)
+    return None
 
 
 def initialize_hazelcast():
@@ -43,25 +40,21 @@ def initialize_hazelcast():
     global CLIENT
     global MESSAGES_MAP
 
-    hazelcast_cluster_name = ""
-    cluster_members = []
+    cluster_name_encoded = get_key_value("hazelcast/hazelcast-cluster-name")
+    clients_encoded = get_key_value("hazelcast/hazelcast-clients")
 
-    # Get hazelcast-cluster-name IPs from config server
-    hazelcast_cluster_name = get_hazelcast_service_ips("hazelcast-cluster-name")
-    if hazelcast_cluster_name is None:
-        return "failure", "No Hazelcast cluster name"
+    if not cluster_name_encoded or not clients_encoded:
+        return "failure", "Missing Hazelcast config in Consul"
 
-    # Get hazelcast-clients IPs from config server
-    cluster_members = get_hazelcast_service_ips("hazelcast-clients")
-    if cluster_members is None:
-        return "failure", "No Hazelcast cluster clients"
+    cluster_name = cluster_name_encoded.decode()
+    members = json.loads(clients_encoded.decode())
 
     CLIENT = hazelcast.HazelcastClient(
-        cluster_name=hazelcast_cluster_name,
-        cluster_members=cluster_members,
+        cluster_name=cluster_name,
+        cluster_members=members,
         lifecycle_listeners=[
             lambda state: print("Lifecycle event >>>", state),
-        ]
+        ],
     )
 
     MESSAGES_MAP = CLIENT.get_map("messages-map").blocking()
@@ -125,9 +118,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     PORT = args.port
 
-    STATUS = ""
-    while STATUS != "success":
+    register_service(name="logging-service", port=PORT)
+
+    while True:
         print("Initializing Hazelcast...")
-        STATUS, _ = initialize_hazelcast()
+        status, _ = initialize_hazelcast()
+        if status == "success":
+            break
+        time.sleep(2)
 
     app.run(port=args.port, debug=True)

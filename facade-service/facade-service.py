@@ -3,19 +3,28 @@
 
 Accepts POST/GET requests from the client.
 """
+import os
 import sys
-import signal
 import time
+import json
+import signal
 import uuid
 import random
 import argparse
 from flask import Flask, request, jsonify
 import requests
 import hazelcast
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from consul_service.consul_service import (
+    discover_service,
+    get_key_value,
+    register_service,
+)
+
 
 app = Flask(__name__)
 
-CONFIG_SERVER_URL = "http://127.0.0.1:5006/config"
+# CONFIG_SERVER_URL = "http://127.0.0.1:5006/config"
 SERVICES_IPS = {}
 CLIENT = None
 MESSAGES_QUEUE = None
@@ -50,7 +59,9 @@ def get_service_data(service_name: str, path: str):
             print(f"All {service_name} ports are unavailable after retries.")
             break
 
-        print(f"Port {service_ip} is unavailable after retries. Selecting another port...")
+        print(
+            f"Port {service_ip} is unavailable after retries. Selecting another port..."
+        )
         service_ip = random.choice(service_ips)
         service_ips.remove(service_ip)
         url = f"http://{service_ip}/{path}"
@@ -63,7 +74,7 @@ def post_data_to_service(service_name: str, path: str, payload: dict):
     """
     Posting data to service.
     """
-    service_ips = list(SERVICES_IPS.get(service_name))
+    service_ips = list(SERVICES_IPS.get(service_name, []))
     num_services = len(service_ips)
     service_ip = random.choice(service_ips)
     service_ips.remove(service_ip)
@@ -86,7 +97,9 @@ def post_data_to_service(service_name: str, path: str, payload: dict):
             print("All port are unavailable after retries.")
             break
 
-        print(f"Port {service_ip} is unavailable after retries. Selecting another port...")
+        print(
+            f"Port {service_ip} is unavailable after retries. Selecting another port..."
+        )
         service_ip = random.choice(service_ips)
         service_ips.remove(service_ip)
         url = f"http://{service_ip}/{path}"
@@ -95,38 +108,6 @@ def post_data_to_service(service_name: str, path: str, payload: dict):
     return None
 
 
-def get_logging_service_ips():
-    """
-    Getting logging service ips from config server.
-    """
-    try:
-        response = requests.get(f"{CONFIG_SERVER_URL}/logging-service", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("logging-service", [])
-
-        print(f"Failed to get logging-service IPs from config server. Status: {response.status_code}")
-        return []
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting logging-service IPs from config server: {e}")
-        return []
-
-def get_messages_service_ips():
-    """
-    Getting messages service ips from config server.
-    """
-    try:
-        response = requests.get(f"{CONFIG_SERVER_URL}/messages-service", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("messages-service", [])
-
-        print(f"Failed to get messages-service IPs from config server. Status: {response.status_code}")
-        return []
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting messages-service IPs from config server: {e}")
-        return []
-
 def get_services_ips():
     """
     Getting services IPs from the config server and storing them globally.
@@ -134,36 +115,22 @@ def get_services_ips():
     """
     global SERVICES_IPS
 
-    logging_service_ips = get_logging_service_ips()
-    if not logging_service_ips:
+    logging_services = discover_service("logging-service")
+    if not logging_services:
         return "failure", "No logging services available"
 
-    messages_service_ips = get_messages_service_ips()
-    if not messages_service_ips:
+    messages_services = discover_service("messages-service")
+    if not messages_services:
         return "failure", "No messaging services available"
 
-    SERVICES_IPS['logging-service'] = logging_service_ips
-    SERVICES_IPS['messages-service'] = messages_service_ips
+    SERVICES_IPS["logging-service"] = [
+        f"{srv['Address']}:{srv['Port']}" for srv in logging_services
+    ]
+    SERVICES_IPS["messages-service"] = [
+        f"{srv['Address']}:{srv['Port']}" for srv in messages_services
+    ]
 
     return "success", "Services IPs loaded successfully"
-
-
-def get_hazelcast_service_ips(property_name: str):
-    """
-    Function to initialize the service IPs from command-line arguments
-    """
-    global CONFIG_SERVER_URL
-
-    try:
-        response = requests.get(f"{CONFIG_SERVER_URL}/{property_name}", timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return data.get(f"{property_name}", "")
-
-        print(f"Failed to get {property_name} IPs from config server. Status: {response.status_code}")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error getting {property_name} IPs from config server: {e}")
 
 
 def initialize_hazelcast():
@@ -173,25 +140,21 @@ def initialize_hazelcast():
     global CLIENT
     global MESSAGES_QUEUE
 
-    hazelcast_cluster_name = ""
-    cluster_members = []
+    cluster_name_encoded = get_key_value("hazelcast/hazelcast-cluster-name")
+    clients_encoded = get_key_value("hazelcast/hazelcast-clients")
 
-    # Get hazelcast-cluster-name IPs from config server
-    hazelcast_cluster_name = get_hazelcast_service_ips("hazelcast-cluster-name")
-    if hazelcast_cluster_name is None:
-        return "failure", "No Hazelcast cluster name"
+    if not cluster_name_encoded or not clients_encoded:
+        return "failure", "Missing Hazelcast config in Consul"
 
-    # Get hazelcast-clients IPs from config server
-    cluster_members = get_hazelcast_service_ips("hazelcast-clients")
-    if cluster_members is None:
-        return "failure", "No Hazelcast cluster clients"
+    cluster_name = cluster_name_encoded.decode()
+    members = json.loads(clients_encoded.decode())
 
     CLIENT = hazelcast.HazelcastClient(
-        cluster_name=hazelcast_cluster_name,
-        cluster_members=cluster_members,
+        cluster_name=cluster_name,
+        cluster_members=members,
         lifecycle_listeners=[
             lambda state: print("Lifecycle event >>>", state),
-        ]
+        ],
     )
 
     MESSAGES_QUEUE = CLIENT.get_queue("messages-queue").blocking()
@@ -199,7 +162,7 @@ def initialize_hazelcast():
     return "success", "Hazelcast IPs loaded successfully"
 
 
-@app.route('/facade', methods=['POST'])
+@app.route("/facade", methods=["POST"])
 def facade_post():
     """
     Handles POST requests from the client, logs the message, and returns a response.
@@ -218,7 +181,7 @@ def facade_post():
         A response indicating success or failure, along with the UUID of the logged message.
         If the request fails after retries, returns a failure response.
     """
-    msg = request.json.get('msg')
+    msg = request.json.get("msg")
     if not msg:
         return jsonify({"status": "failure", "message": "No message provided"}), 400
 
@@ -230,14 +193,19 @@ def facade_post():
     payload = {"uuid": uuid_val, "msg": msg}
 
     # Selecting port for logging service
-    status = post_data_to_service("logging-service", "log", payload)
-    if status == "success":
+    response = post_data_to_service("logging-service", "log", payload)
+    if response == "success":
         return jsonify({"status": "success", "uuid": uuid_val}), 200
 
-    return jsonify({"status": "failure", "message": "Failed to log message after retries"}), 500
+    return (
+        jsonify(
+            {"status": "failure", "message": "Failed to log message after retries"}
+        ),
+        500,
+    )
 
 
-@app.route('/facade', methods=['GET'])
+@app.route("/facade", methods=["GET"])
 def facade_get():
     """
     Handles GET requests from the client, retrieves logs and a static message,
@@ -280,19 +248,27 @@ signal.signal(signal.SIGINT, shutdown_handler)   # Ctrl+C
 signal.signal(signal.SIGTERM, shutdown_handler)  # kill command
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Facade service")
-    parser.add_argument('--port', type=int, default=5000, help='Port to run the service on')
+    parser.add_argument(
+        "--port", type=int, default=5000, help="Port to run the service on"
+    )
     args = parser.parse_args()
 
-    STATUS = ""
-    while STATUS != "success":
-        print("Getting services IPs...")
-        STATUS, _ = get_services_ips()
+    register_service(name="facade-service", port=args.port)
 
-    STATUS = ""
-    while STATUS != "success":
+    while True:
+        print("Getting services IPs...")
+        status, _ = get_services_ips()
+        if status == "success":
+            break
+        time.sleep(2)
+
+    while True:
         print("Initializing Hazelcast...")
-        STATUS, _ = initialize_hazelcast()
+        status, _ = initialize_hazelcast()
+        if status == "success":
+            break
+        time.sleep(2)
 
     app.run(port=args.port, debug=True)
